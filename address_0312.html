@@ -47,7 +47,7 @@ async function getRegionFromAPI(address) {
 
 // 주소 텍스트만으로 좌표/지번 정보를 가져오는 REST API 방식이 대량 처리에 적합합니다.
 async function fetchAddress(fullAddress) {
-    const API_KEY = 'YOUR_REST_API_KEY'; // 발급받으신 REST API 키
+    const API_KEY = '905d684021a6fb9f05b54ab3a179cfa5'; // 발급받으신 REST API 키
     if (!fullAddress || String(fullAddress).trim() === "") return "주소없음";
 
     // 1. 주소 정제: 괄호 내용 제거 및 상세주소 절삭
