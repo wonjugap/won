@@ -1213,24 +1213,28 @@
                 const snapshot = await db.collection('users_normalized').get();
                 
                 snapshot.forEach(doc => {
-                    const data = doc.data();
-                    const docId = doc.id; // 문서 ID가 정규화된 전화번호
-                    
-                    existingUsersData.push({
-                        id: docId,
-                        ...data
-                    });
-                    
-                    // 문서 ID를 전화번호로 사용 (migrate.js 방식과 일치)
-                    if (docId && docId.length >= 10) {
-                        existingPhoneNumbers.add(docId);
-                    }
-                    
-                    // phoneNumber 필드도 있다면 추가 (하위 호환성)
-                    if (data.phoneNumber) {
-                        existingPhoneNumbers.add(data.phoneNumber);
-                    }
-                });
+    const data = doc.data();
+    const docId = doc.id;
+    
+    existingUsersData.push({
+        id: docId,
+        ...data
+    });
+    
+    // ✅ 수정: 문서 ID를 정규화해서 저장
+    const normalizedDocId = normalizePhoneNumber(docId);
+    if (normalizedDocId) {
+        existingPhoneNumbers.add(normalizedDocId);
+    }
+    
+    // ✅ 수정: phoneNumber 필드도 정규화해서 저장
+    if (data.phoneNumber) {
+        const normalizedPhone = normalizePhoneNumber(data.phoneNumber);
+        if (normalizedPhone) {
+            existingPhoneNumbers.add(normalizedPhone);
+        }
+    }
+});
                 
                 addLog(`✅ 기존 데이터 분석 완료: 총 ${existingUsersData.length}개`, 'success');
                 addLog(`📞 고유 전화번호: ${existingPhoneNumbers.size}개`, 'info');
@@ -1497,13 +1501,18 @@
                     }
                 }
 
-                const normalizedGender = normalizeGender(item.gender);
-                if (!normalizedGender) {
-                    issues.push('성별 형식 오류');
-                    isValid = false;
-                } else {
-                    item.normalizedGender = normalizedGender;
-                }
+	// 성별 검증 (수정 후)
+	const normalizedGender = normalizeGender(item.gender);
+	if (!item.gender) {
+	    // 성별이 공백이면 허용
+	    item.normalizedGender = null;
+	} else if (!normalizedGender) {
+	    issues.push('성별 형식 오류');
+	    isValid = false;
+	} else {
+	    item.normalizedGender = normalizedGender;
+	}
+
 
                 if (!item.region) {
                     issues.push('지역 누락');
