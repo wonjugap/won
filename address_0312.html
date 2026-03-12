@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>원주시 주소 완벽 분석기 (API형)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; padding: 40px; background: #f1f5f9; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .progress-bar { height: 10px; background: #e2e8f0; border-radius: 5px; margin: 20px 0; display: none; }
+        .progress-inner { height: 100%; background: #3b82f6; width: 0%; border-radius: 5px; transition: 0.3s; }
+        #status { font-size: 0.9em; color: #64748b; margin-top: 10px; }
+        button { width: 100%; padding: 15px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>주소 기반 지역(동) 정밀 추출</h2>
+    <p>카카오 주소 API를 사용하여 여러 동을 지나는 도로명도 완벽하게 분류합니다.</p>
+    
+    <input type="file" id="excelFile" accept=".xlsx, .xls" />
+<p> </p>
+<p> </p>
+    <button onclick="processWithAPI()">분석 시작 및 엑셀 다운로드</button>
+    
+    <div class="progress-bar" id="progressBar"><div class="progress-inner" id="progressInner"></div></div>
+    <div id="status"></div>
+</div>
+
+<script src="//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
+<script>
+// 카카오 API를 활용한 동 추출 함수 (비동기 처리)
+async function getRegionFromAPI(address) {
+    return new Promise((resolve) => {
+        const geocoder = new window.daum.Postcode({
+            oncomplete: function(data) {
+                // bname: 법정동 (예: 태장동), hname: 행정동
+                resolve(data.bname || data.hname || "분석실패");
+            },
+            onclose: function() { resolve("분석불가"); }
+        });
+        // 주소 검색창을 띄우지 않고 내부 로직으로 검색 (카카오 가이드 참고)
+        // 여기서는 데이터가 많을 경우를 대비해 직접 검색 API를 호출하는 방식으로 설명드립니다.
+    });
+}
+
+// 주소 텍스트만으로 좌표/지번 정보를 가져오는 REST API 방식이 대량 처리에 적합합니다.
+async function fetchAddress(address) {
+    const API_KEY = '905d684021a6fb9f05b54ab3a179cfa5'; // 발급받으신 REST API 키를 입력하세요.
+    if (!address || String(address).trim() === "") return "주소없음";
+
+    try {
+        const response = await fetch(`https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(address)}`, {
+            headers: { 'Authorization': `KakaoAK ${API_KEY}` }
+        });
+        
+        const result = await response.json();
+
+        if (result.documents && result.documents.length > 0) {
+            const doc = result.documents[0];
+            
+            // 1. 지번 주소에서 읍면동 찾기
+            if (doc.address && doc.address.region_3depth_name) {
+                return doc.address.region_3depth_name;
+            } 
+            
+            // 2. 도로명 주소 상세 정보에서 찾기
+            if (doc.road_address) {
+                if (doc.road_address.region_3depth_name) {
+                    return doc.road_address.region_3depth_name;
+                }
+                // 도로명 주소에 읍면동이 비어있는 경우(종종 발생), 행정동 명칭 확인
+                if (doc.road_address.h_name) {
+                    return doc.road_address.h_name;
+                }
+            }
+
+            // 3. 전체 데이터 구조에서 법정동/행정동 직접 확인
+            const b_name = doc.address_name.split(' ').pop(); // 주소의 마지막 단어라도 추출
+            return b_name || "분석불가";
+        }
+        
+        return "조회결과없음";
+    } catch (e) {
+        console.error("API Error:", e);
+        return "API연결오류";
+    }
+}
+
+async function processWithAPI() {
+    const file = document.getElementById('excelFile').files[0];
+    if (!file) return alert("파일을 선택하세요.");
+    
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, {type: 'array'});
+        let jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+        
+        const progressBar = document.getElementById('progressBar');
+        const progressInner = document.getElementById('progressInner');
+        const status = document.getElementById('status');
+        
+        progressBar.style.display = 'block';
+        
+        for(let i=0; i<jsonData.length; i++) {
+            const addrKey = Object.keys(jsonData[i]).find(k => k.includes('주소'));
+            const address = jsonData[i][addrKey];
+            
+            // API 호출 (실제 활용 시 REST API 키 사용 권장)
+            jsonData[i]['지역'] = await fetchAddress(address);
+            
+            let percent = Math.round(((i + 1) / jsonData.length) * 100);
+            progressInner.style.width = percent + '%';
+            status.innerText = `진행 중: ${i+1} / ${jsonData.length} 건 분석 완료...`;
+        }
+
+        const newSheet = XLSX.utils.json_to_sheet(jsonData);
+        const newWorkbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(newWorkbook, newSheet, "결과");
+        XLSX.writeFile(newWorkbook, "원주시_API정밀분석.xlsx");
+        status.innerText = "분석 완료 및 다운로드 시작!";
+    };
+    reader.readAsArrayBuffer(file);
+}
+</script>
+</body>
+</html>
