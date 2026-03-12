@@ -2,59 +2,46 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>원주시 주소 완벽 분석기 (API형)</title>
+    <title>원주시 주소 완벽 분석기 (최종)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         body { font-family: 'Malgun Gothic', sans-serif; padding: 40px; background: #f1f5f9; }
         .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
         .progress-bar { height: 10px; background: #e2e8f0; border-radius: 5px; margin: 20px 0; display: none; }
         .progress-inner { height: 100%; background: #3b82f6; width: 0%; border-radius: 5px; transition: 0.3s; }
-        #status { font-size: 0.9em; color: #64748b; margin-top: 10px; }
+        #status { font-size: 0.9em; color: #64748b; margin-top: 10px; white-space: pre-wrap; }
         button { width: 100%; padding: 15px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        button:hover { background: #2563eb; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>주소 기반 지역(동) 정밀 추출</h2>
-    <p>카카오 주소 API를 사용하여 여러 동을 지나는 도로명도 완벽하게 분류합니다.</p>
+    <h2>📍 원주시 주소 정밀 분석 도구</h2>
+    <p>도로명만 있는 주소도 건물번호를 대조하여 정확한 '동'을 찾아냅니다.</p>
     
     <input type="file" id="excelFile" accept=".xlsx, .xls" />
-<p> </p>
-<p> </p>
-    <button onclick="processWithAPI()">분석 시작 및 엑셀 다운로드</button>
+    <div style="margin: 20px 0;">
+        <button onclick="processWithAPI()">분석 시작 및 엑셀 다운로드</button>
+    </div>
     
     <div class="progress-bar" id="progressBar"><div class="progress-inner" id="progressInner"></div></div>
-    <div id="status"></div>
+    <div id="status">파일을 선택하고 분석 버튼을 눌러주세요.</div>
 </div>
 
-<script src="//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
 <script>
-// 카카오 API를 활용한 동 추출 함수 (비동기 처리)
-async function getRegionFromAPI(address) {
-    return new Promise((resolve) => {
-        const geocoder = new window.daum.Postcode({
-            oncomplete: function(data) {
-                // bname: 법정동 (예: 태장동), hname: 행정동
-                resolve(data.bname || data.hname || "분석실패");
-            },
-            onclose: function() { resolve("분석불가"); }
-        });
-        // 주소 검색창을 띄우지 않고 내부 로직으로 검색 (카카오 가이드 참고)
-        // 여기서는 데이터가 많을 경우를 대비해 직접 검색 API를 호출하는 방식으로 설명드립니다.
-    });
-}
-
-// 주소 텍스트만으로 좌표/지번 정보를 가져오는 REST API 방식이 대량 처리에 적합합니다.
+/**
+ * 카카오 REST API를 이용한 주소 검색 함수
+ */
 async function fetchAddress(fullAddress) {
     const API_KEY = '905d684021a6fb9f05b54ab3a179cfa5'; 
     if (!fullAddress || String(fullAddress).trim() === "") return "주소없음";
 
-    // 특수문자 제거 및 검색어 최적화
+    // 검색어 정제: 괄호 및 상세주소 제거
     let searchAddress = String(fullAddress)
         .replace(/\(.*\)/g, '')   
         .split(',')[0]            
-        .replace(/[:]/g, ' ')      // 콜론(:) 제거
+        .replace(/[:]/g, ' ')      
         .replace(/\s\d+호.*$/, '') 
         .trim();
 
@@ -63,51 +50,89 @@ async function fetchAddress(fullAddress) {
             headers: { 'Authorization': `KakaoAK ${API_KEY}` }
         });
         
-        // 403 에러 발생 시 사용자에게 알림
-        if (response.status === 403) {
-            console.error("도메인 미등록 또는 키 오류 (403)");
-            return "권한오류(도메인확인)";
+        const result = await response.json();
+
+        // 권한 오류(403) 발생 시 로깅
+        if (result.errorType === "NotAuthorizedError") {
+            return "권한오류(API활성화필요)";
         }
 
-        const result = await response.json();
-        // ... (이하 동일)
+        if (result.documents && result.documents.length > 0) {
+            const doc = result.documents[0];
+            let region = "";
+            
+            if (doc.address) {
+                region = doc.address.region_3depth_name;
+            } else if (doc.road_address) {
+                region = doc.road_address.region_3depth_name || doc.road_address.h_name;
+            }
 
+            if (!region && doc.address_name) {
+                const parts = doc.address_name.split(' ');
+                region = parts.find(p => p.endsWith('동') || p.endsWith('읍') || p.endsWith('면')) || "";
+            }
+
+            return region || "분류불가";
+        }
+        
+        // 검색 실패 시 재시도 (주소를 더 짧게 잘라서)
+        const shorter = searchAddress.split(' ').slice(0, 4).join(' ');
+        if (shorter !== searchAddress && shorter.length > 5) {
+            return await fetchAddress(shorter);
+        }
+
+        return "검색결과없음";
+    } catch (e) {
+        return "연결오류";
+    }
+}
+
+/**
+ * 엑셀 처리 및 API 호출 루프
+ */
 async function processWithAPI() {
-    const file = document.getElementById('excelFile').files[0];
-    if (!file) return alert("파일을 선택하세요.");
+    const fileInput = document.getElementById('excelFile');
+    if (!fileInput.files[0]) return alert("파일을 선택하세요.");
+    
+    const status = document.getElementById('status');
+    const progressBar = document.getElementById('progressBar');
+    const progressInner = document.getElementById('progressInner');
     
     const reader = new FileReader();
     reader.onload = async function(e) {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, {type: 'array'});
-        let jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
-        
-        const progressBar = document.getElementById('progressBar');
-        const progressInner = document.getElementById('progressInner');
-        const status = document.getElementById('status');
-        
-        progressBar.style.display = 'block';
-        
-        for(let i=0; i<jsonData.length; i++) {
-            const addrKey = Object.keys(jsonData[i]).find(k => k.includes('주소'));
-            const address = jsonData[i][addrKey];
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            let jsonData = XLSX.utils.sheet_to_json(firstSheet);
             
-            // API 호출 (실제 활용 시 REST API 키 사용 권장)
-            jsonData[i]['지역'] = await fetchAddress(address);
+            progressBar.style.display = 'block';
+            status.innerText = "분석을 시작합니다...";
             
-            let percent = Math.round(((i + 1) / jsonData.length) * 100);
-            progressInner.style.width = percent + '%';
-            status.innerText = `진행 중: ${i+1} / ${jsonData.length} 건 분석 완료...`;
-        }
+            for(let i = 0; i < jsonData.length; i++) {
+                const addrKey = Object.keys(jsonData[i]).find(k => k.includes('주소'));
+                if (addrKey) {
+                    jsonData[i]['분석지역'] = await fetchAddress(jsonData[i][addrKey]);
+                }
+                
+                let percent = Math.round(((i + 1) / jsonData.length) * 100);
+                progressInner.style.width = percent + '%';
+                status.innerText = `진행률: ${percent}% (${i + 1} / ${jsonData.length} 건 완료)`;
+            }
 
-        const newSheet = XLSX.utils.json_to_sheet(jsonData);
-        const newWorkbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(newWorkbook, newSheet, "결과");
-        XLSX.writeFile(newWorkbook, "원주시_API정밀분석.xlsx");
-        status.innerText = "분석 완료 및 다운로드 시작!";
+            const newSheet = XLSX.utils.json_to_sheet(jsonData);
+            const newWorkbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(newWorkbook, newSheet, "분석결과");
+            XLSX.writeFile(newWorkbook, "원주시_주소분석_결과.xlsx");
+            
+            status.innerText = "✅ 모든 분석이 완료되었습니다! 파일이 다운로드됩니다.";
+        } catch (err) {
+            status.innerText = "❌ 처리 중 오류 발생: " + err.message;
+        }
     };
-    reader.readAsArrayBuffer(file);
+    reader.readAsArrayBuffer(fileInput.files[0]);
 }
 </script>
+
 </body>
 </html>
