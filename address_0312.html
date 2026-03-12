@@ -47,15 +47,15 @@ async function getRegionFromAPI(address) {
 
 // 주소 텍스트만으로 좌표/지번 정보를 가져오는 REST API 방식이 대량 처리에 적합합니다.
 async function fetchAddress(fullAddress) {
-    const API_KEY = '905d684021a6fb9f05b54ab3a179cfa5'; // 발급받으신 REST API 키
+    const API_KEY = '905d684021a6fb9f05b54ab3a179cfa5'; 
     if (!fullAddress || String(fullAddress).trim() === "") return "주소없음";
 
-    // 1. 주소 정제: 괄호 내용 제거 및 상세주소 절삭
-    // 예: "강원도 원주시 우무개로 21-8 (태장동), 301호" -> "강원도 원주시 우무개로 21-8"
+    // 특수문자 제거 및 검색어 최적화
     let searchAddress = String(fullAddress)
-        .replace(/\(.*\)/g, '')   // 괄호와 그 안의 내용 삭제
-        .split(',')[0]            // 쉼표 뒤 상세주소 삭제
-        .replace(/\s\d+호.*$/, '') // 숫자+호로 끝나는 부분 삭제
+        .replace(/\(.*\)/g, '')   
+        .split(',')[0]            
+        .replace(/[:]/g, ' ')      // 콜론(:) 제거
+        .replace(/\s\d+호.*$/, '') 
         .trim();
 
     try {
@@ -63,44 +63,14 @@ async function fetchAddress(fullAddress) {
             headers: { 'Authorization': `KakaoAK ${API_KEY}` }
         });
         
+        // 403 에러 발생 시 사용자에게 알림
+        if (response.status === 403) {
+            console.error("도메인 미등록 또는 키 오류 (403)");
+            return "권한오류(도메인확인)";
+        }
+
         const result = await response.json();
-
-        // [디버깅] API가 실제로 어떤 데이터를 주는지 콘솔에 출력 (F12에서 확인 가능)
-        console.log(`검색어: ${searchAddress}`, result);
-
-        if (result.documents && result.documents.length > 0) {
-            const doc = result.documents[0];
-            
-            // 법정동/행정동 정보를 순차적으로 탐색
-            let region = "";
-            
-            if (doc.address) {
-                region = doc.address.region_3depth_name;
-            } else if (doc.road_address) {
-                region = doc.road_address.region_3depth_name || doc.road_address.h_name;
-            }
-
-            // 만약 위에서도 못 찾았다면 전체 주소명에서 마지막 '동/읍/면' 추출
-            if (!region && doc.address_name) {
-                const parts = doc.address_name.split(' ');
-                region = parts.find(p => p.endsWith('동') || p.endsWith('읍') || p.endsWith('면')) || "";
-            }
-
-            return region || "분류불가";
-        }
-        
-        // 검색 결과가 아예 없을 때: 주소를 더 짧게 줄여서 재시도 (시/군/구 + 도로명까지만)
-        const shorter = searchAddress.split(' ').slice(0, 4).join(' ');
-        if (shorter !== searchAddress) {
-            return await fetchAddress(shorter);
-        }
-
-        return "검색결과없음";
-    } catch (e) {
-        console.error("API 호출 중 오류 발생:", e);
-        return "연결오류";
-    }
-}
+        // ... (이하 동일)
 
 async function processWithAPI() {
     const file = document.getElementById('excelFile').files[0];
