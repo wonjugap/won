@@ -1582,6 +1582,46 @@
                 return;
             }
 
+    for (const item of validatedData) {
+        if (!uploadInProgress) break;
+
+        try {
+            // 1. 전화번호 정규화 (하이픈 제거 등)
+            const normalizedPhone = normalizePhoneNumber(item.phoneNumber);
+            
+            // 2. 중복 체크 로직 (새 데이터 추가 모드인 경우)
+            if (uploadMode === 'new' && existingPhoneNumbers.has(normalizedPhone)) {
+                uploadStats.skipped++;
+                addLog(`⏭️ 건너뜀 (이미 존재): ${item.name} (${item.phoneNumber})`, 'warning');
+                updateUploadProgress();
+                continue; // 다음 데이터로 넘어감
+            }
+
+            // 3. Firebase 업로드 실행
+            // 문서 ID를 전화번호로 설정하면 Firestore 자체에서도 덮어쓰기 방지가 가능합니다.
+            await db.collection('users_normalized').doc(normalizedPhone).set({
+                name: item.name,
+                phoneNumber: item.phoneNumber,
+                gender: item.gender,
+                region: item.region,
+                uploadedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                uploadedBy: currentAdmin.username
+            });
+
+            // 업로드 성공 후 로컬 중복 목록에도 추가 (이번 업로드 내 중복 방지)
+            existingPhoneNumbers.add(normalizedPhone);
+            
+            uploadStats.success++;
+            addLog(`✅ 업로드 성공: ${item.name}`, 'success');
+
+        } catch (error) {
+            uploadStats.failed++;
+            addLog(`❌ 업로드 실패: ${item.name} - ${error.message}`, 'error');
+        }
+        
+        updateUploadProgress();
+    }
+
             if (validatedData.length === 0) {
                 showStatus('업로드할 유효한 데이터가 없습니다.', 'error');
                 return;
@@ -1604,6 +1644,7 @@
                 failed: 0,
                 duplicate: 0,
                 skipped: 0
+
             };
 
             updateUploadStats();
