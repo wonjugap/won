@@ -636,7 +636,7 @@
 
         <!-- 보안 헤더 -->
         <div class="security-header">
-            <h2>지인찾기 관리시스템</h2>
+            <h2>지인찾기 관리 시스템</h2>
             <div>이 시스템은 승인된 관리자만 접근 가능합니다. 모든 활동이 기록됩니다.</div>
         </div>
 
@@ -669,7 +669,7 @@
                     <div style="font-size: 10px; opacity: 0.8;">세션 유효</div>
                     <div id="sessionExpiry" style="font-size: 11px;"></div>
                 </div>
-                <h1> 지인찾기 관리시스템</h1>
+                <h1>🛡 지인찾기 관리자 대시보드</h1>
                 <p>사용자 권한 관리 및 시스템 모니터링을 실시간으로 확인할 수 있습니다</p>
             </div>
 
@@ -3242,11 +3242,19 @@
             devicesEl.innerHTML = html;
         }
 
-        // 모든 캐시 강제 무효화 (새로 추가)
+        // 모든 캐시 강제 무효화 (앱 캐시 서버 무효화 포함)
         async function forceRefreshAllCaches() {
             try {
                 addSecurityLog('INFO', '모든 캐시 강제 무효화 시작');
-                // 모든 캐시 타임스탬프를 0으로 설정하여 무효화
+
+                // ✅ [핵심] Firebase config/settings에 캐시 무효화 시각 기록
+                // → Flutter 앱이 이 값을 확인하여 로컬 SharedPreferences 캐시를 자동 삭제함
+                await db.collection('config').doc('settings').set({
+                    cacheInvalidatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+                addSecurityLog('INFO', 'Firebase config/settings에 cacheInvalidatedAt 기록 완료 → 앱 캐시 무효화 예약됨');
+
+                // 관리자 페이지 내부 캐시 초기화
                 usersCache.timestamp = 0;
                 usersCache.loaded = false;
                 devicesCache.timestamp = 0;
@@ -3269,7 +3277,7 @@
                 
                 updateDashboardStats();
                 addSecurityLog('INFO', '모든 캐시 무효화 완료');
-                alert('✅ 캐시가 무효화되고 최신 데이터를 불러왔습니다!');
+                alert('✅ 앱 캐시 무효화 신호가 전송되었습니다!\n\n사용자가 다음에 앱을 실행하거나 지인 찾기를 누르면\n자동으로 최신 데이터를 다시 불러옵니다.');
                 
             } catch (error) {
                 addSecurityLog('ERROR', `캐시 무효화 실패: ${error.message}`);
