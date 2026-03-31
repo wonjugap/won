@@ -294,24 +294,139 @@
             flex: 1;
             min-width: 200px;
         }
+        /* 검색/필터 영역 */
+        .user-search-bar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .user-search-bar input {
+            flex: 1;
+            min-width: 180px;
+            padding: 10px 14px;
+            border: 1.5px solid #ddd;
+            border-radius: 8px;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .user-search-bar input:focus {
+            border-color: #667eea;
+        }
+        .user-filter-btns {
+            display: flex;
+            gap: 6px;
+        }
+        .filter-btn {
+            padding: 8px 14px;
+            border: 1.5px solid #ddd;
+            border-radius: 8px;
+            background: white;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .filter-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        .user-search-count {
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 10px;
+        }
+        /* 사용자 목록 */
         .user-list {
-            max-height: 400px;
-            overflow-y: auto;
+            /* max-height 제거 → 전체 표시 */
         }
         .user-item {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px;
-            border: 1px solid #eee;
-            border-radius: 8px;
+            flex-direction: column;
+            gap: 10px;
+            padding: 14px;
+            border: 1px solid #e0e0e0;
+            border-left: 4px solid #667eea;
+            border-radius: 10px;
             margin-bottom: 10px;
-            background: #f9f9f9;
+            background: #fafafa;
+            transition: box-shadow 0.15s;
+        }
+        .user-item:active {
+            box-shadow: 0 2px 8px rgba(102,126,234,0.15);
+        }
+        .user-item.inactive {
+            border-left-color: #ccc;
+            background: #f5f5f5;
+            opacity: 0.75;
+        }
+        .user-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 8px;
+        }
+        .user-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .user-item-phone {
+            font-size: 16px;
+            font-weight: bold;
+            color: #222;
+        }
+        .user-item-name {
+            font-size: 14px;
+            color: #555;
+            margin-top: 2px;
+        }
+        .user-item-meta {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .user-status-badge {
+            font-size: 11px;
+            font-weight: bold;
+            padding: 3px 9px;
+            border-radius: 20px;
+            white-space: nowrap;
+        }
+        .user-status-badge.active {
+            background: #d4edda;
+            color: #155724;
+        }
+        .user-status-badge.inactive {
+            background: #f5f5f5;
+            color: #888;
+            border: 1px solid #ccc;
+        }
+        .user-stats-row {
+            display: flex;
+            gap: 12px;
+            font-size: 12px;
+            color: #667eea;
+            background: #f0f3ff;
+            border-radius: 6px;
+            padding: 7px 10px;
+            flex-wrap: wrap;
+        }
+        .user-stats-row span {
+            white-space: nowrap;
         }
         .user-actions {
             display: flex;
             gap: 8px;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
+        }
+        .user-actions .btn {
+            flex: 1;
+            font-size: 13px;
+            padding: 9px 6px;
+            text-align: center;
         }
         /* 지역 권한 선택 스타일 */
         .region-permissions {
@@ -612,8 +727,19 @@
                 flex-direction: column;
             }
             .user-actions {
+                flex-direction: row;
+                gap: 6px;
+            }
+            .user-actions .btn {
+                font-size: 12px;
+                padding: 8px 4px;
+            }
+            .user-search-bar {
                 flex-direction: column;
-                gap: 5px;
+                align-items: stretch;
+            }
+            .user-filter-btns {
+                justify-content: flex-start;
             }
             .region-grid {
                 grid-template-columns: 1fr;
@@ -803,7 +929,18 @@
                         </div>
                     </div>
                     <div id="addUserMessage"></div>
-                    <h3 style="margin-top: 30px;">👥 등록된 사용자 목록 (이 <span id="userCount">0</span>명)</h3>
+                    <h3 style="margin-top: 30px;">👥 등록된 사용자 목록 (<span id="userCount">0</span>명)</h3>
+                    <!-- 검색/필터 영역 -->
+                    <div class="user-search-bar" style="margin-top: 14px;">
+                        <input type="text" id="userSearchInput" placeholder="🔍 이름, 전화번호, 추천인 검색..."
+                               oninput="filterUsers()" autocomplete="off" />
+                        <div class="user-filter-btns">
+                            <button class="filter-btn active" id="filterAll"    onclick="setFilter('all')">전체</button>
+                            <button class="filter-btn"        id="filterActive" onclick="setFilter('active')">활성</button>
+                            <button class="filter-btn"        id="filterInactive" onclick="setFilter('inactive')">비활성</button>
+                        </div>
+                    </div>
+                    <div class="user-search-count" id="userSearchCount"></div>
                     <div id="userList" class="user-list">
                         <div>사용자 목록을 불러오는 중...</div>
                     </div>
@@ -2736,56 +2873,99 @@
             }
         }
 
+        // 검색/필터 상태
+        let currentFilter = 'all';
+
+        function setFilter(filter) {
+            currentFilter = filter;
+            ['filterAll','filterActive','filterInactive'].forEach(id => {
+                document.getElementById(id).classList.remove('active');
+            });
+            const map = {all:'filterAll', active:'filterActive', inactive:'filterInactive'};
+            document.getElementById(map[filter]).classList.add('active');
+            filterUsers();
+        }
+
+        function filterUsers() {
+            const keyword = (document.getElementById('userSearchInput')?.value || '').trim().toLowerCase().replace(/-/g,'');
+            let filtered = allUsers;
+
+            // 상태 필터
+            if (currentFilter === 'active')   filtered = filtered.filter(u => u.isActive !== false);
+            if (currentFilter === 'inactive') filtered = filtered.filter(u => u.isActive === false);
+
+            // 키워드 검색 (이름 / 전화번호 / 추천인)
+            if (keyword) {
+                filtered = filtered.filter(u => {
+                    const phone = (u.phoneNumber || '').replace(/-/g,'').toLowerCase();
+                    const name  = (u.name || '').toLowerCase();
+                    const ref   = (u.referrer || '').replace(/-/g,'').toLowerCase();
+                    return phone.includes(keyword) || name.includes(keyword) || ref.includes(keyword);
+                });
+            }
+
+            const countEl = document.getElementById('userSearchCount');
+            if (countEl) {
+                if (keyword || currentFilter !== 'all') {
+                    countEl.textContent = `검색 결과: ${filtered.length}명 / 전체 ${allUsers.length}명`;
+                } else {
+                    countEl.textContent = '';
+                }
+            }
+            renderUserList(filtered);
+        }
+
         // 📊 사용자 목록 표시 (새로운 통계 추가)
         function displayUsers(users) {
+            document.getElementById('userCount').textContent = users.length;
+            filterUsers(); // 검색/필터 상태 유지하며 재렌더
+        }
+
+        function renderUserList(users) {
             const userListEl = document.getElementById('userList');
             if (users.length === 0) {
-                userListEl.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">등록된 사용자가 없습니다.</div>';
+                userListEl.innerHTML = '<div style="text-align: center; color: #999; padding: 30px;">검색 결과가 없습니다.</div>';
                 return;
             }
             let html = '';
             users.forEach(user => {
                 const createdAt = user.createdAt ? user.createdAt.toDate().toLocaleDateString('ko-KR') : '알 수 없음';
                 const formattedPhone = formatPhoneNumber(user.phoneNumber);
-                const referrerText = user.referrer ? ` | 추천인: ${user.referrer}` : '';
-                
-                // 권한 정보 표시
-                const permissionText = getUserPermissionText(user);
-                const permissionTags = user.regions && user.regions.length > 0 
-                    ? user.regions.map(region => `<span class="permission-tag limited">${region}</span>`).join('')
+                const referrerText = user.referrer ? `추천인: ${formatPhoneNumber(user.referrer)}` : '';
+                const isActive = user.isActive !== false;
+
+                const permissionTags = user.regions && user.regions.length > 0
+                    ? user.regions.map(r => `<span class="permission-tag limited">${r}</span>`).join(' ')
                     : '<span class="permission-tag all-regions">모든 지역</span>';
-                
-                // 📊 새로운 통계 정보 추가
-                const foundContacts = user.foundContactsCount || 0;
+
+                const foundContacts  = user.foundContactsCount || 0;
                 const phoneCallCount = user.phoneCallCount || 0;
-                const smsCount = user.smsCount || 0;
-                const usageCount = user.usageCount || 0;
-                
-                // 통계 텍스트 생성
-                const statsText = `찾은 지인: ${foundContacts}명 | 전화: ${phoneCallCount}회 | 문자: ${smsCount}회`;
-                
+                const smsCount       = user.smsCount || 0;
+                const usageCount     = user.usageCount || 0;
+
                 html += `
-                    <div class="user-item">
-                        <div>
-                            <strong>${formattedPhone}</strong> (${user.name || '이름 없음'})<br>
-                            <small>가입: ${createdAt} | 사용횟수: ${usageCount}회${referrerText}</small>
-                            <div class="user-permissions">
-                                <span style="font-size: 12px; color: #666; margin-right: 8px;">권한:</span>
-                                ${permissionTags}
+                    <div class="user-item${isActive ? '' : ' inactive'}">
+                        <div class="user-item-header">
+                            <div class="user-item-info">
+                                <div class="user-item-phone">${formattedPhone}</div>
+                                <div class="user-item-name">${user.name || '이름 없음'}</div>
+                                <div class="user-item-meta">가입: ${createdAt} · 사용: ${usageCount}회${referrerText ? ' · ' + referrerText : ''}</div>
+                                <div style="margin-top:6px;">${permissionTags}</div>
                             </div>
-                            <div style="margin-top: 8px; padding: 8px; background: #f8f9fa; border-radius: 6px; font-size: 13px; color: #495057;">
-                                <span style="font-weight: bold; color: #667eea;">📊 이용 통계:</span> ${statsText}
-                            </div>
+                            <span class="user-status-badge ${isActive ? 'active' : 'inactive'}">${isActive ? '활성' : '비활성'}</span>
+                        </div>
+                        <div class="user-stats-row">
+                            <span>🔍 찾은 지인 ${foundContacts}명</span>
+                            <span>📞 전화 ${phoneCallCount}회</span>
+                            <span>💬 문자 ${smsCount}회</span>
                         </div>
                         <div class="user-actions">
-                            <button onclick="openPermissionsModal('${user.id}')" class="btn btn-edit">
-                                🗺️ 권한 편집
+                            <button onclick="openPermissionsModal('${user.id}')" class="btn btn-edit">🗺️ 권한</button>
+                            <button onclick="toggleUserStatus('${user.id}', ${!isActive})"
+                                    class="btn ${isActive ? 'btn-danger' : 'btn-primary'}">
+                                ${isActive ? '비활성화' : '활성화'}
                             </button>
-                            <button onclick="toggleUserStatus('${user.id}', ${!user.isActive})" 
-                                    class="btn ${user.isActive ? 'btn-danger' : 'btn-primary'}">
-                                ${user.isActive ? '비활성화' : '활성화'}
-                            </button>
-                            <button onclick="deleteUser('${user.id}', '${formattedPhone}')" 
+                            <button onclick="deleteUser('${user.id}', '${formattedPhone}')"
                                     class="btn btn-danger">삭제</button>
                         </div>
                     </div>
