@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>주소 -> 우편번호 일괄 변환기 (안전 모드)</title>
+    <title>주소 변환기 - 고강도 안전 모드</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         body { font-family: 'Malgun Gothic', sans-serif; padding: 30px; background-color: #f4f7f6; }
@@ -10,20 +10,20 @@
         .upload-area { border: 2px dashed #3498db; padding: 30px; text-align: center; margin-bottom: 20px; border-radius: 8px; }
         .btn { background: #3498db; color: white; padding: 12px 30px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
         .btn:hover { background: #2980b9; }
-        .btn:disabled { background: #bdc3c7; cursor: wait; }
+        .btn:disabled { background: #bdc3c7; cursor: not-allowed; }
         #status { margin-top: 15px; color: #d35400; font-weight: bold; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
-        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-        th { background: #eee; }
         .progress-container { width: 100%; background: #eee; height: 10px; margin-top: 10px; border-radius: 5px; overflow: hidden; }
         .progress-bar { width: 0%; height: 100%; background: #2ecc71; transition: width 0.1s; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        .error-row { color: #e74c3c; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <div class="box">
-    <h2>📬 우편번호 자동 변환 도구 (안전 모드)</h2>
-    <p>엑셀 파일을 업로드하면 카카오 API로 우편번호를 자동 입력합니다. (초당 5건 처리)</p>
+    <h2>📬 우편번호 변환기 (고강도 안전 모드)</h2>
+    <p>서버 차단을 방지하기 위해 <strong>0.5초 간격</strong>으로 천천히 처리합니다.</p>
     
     <div class="upload-area">
         <input type="file" id="excelInput" accept=".xlsx, .xls" />
@@ -42,15 +42,13 @@
 </div>
 
 <script>
-    // 카카오 REST API 키
     const KAKAO_API_KEY = "cbf0bc38532a4de33f10f812660eec6c"; 
-
     const startBtn = document.getElementById('startBtn');
     const statusDiv = document.getElementById('status');
     const progressBar = document.getElementById('progressBar');
     const resultBody = document.getElementById('resultBody');
 
-    // 0.2초 대기를 위한 함수 (429 에러 방지용)
+    // 대기 함수
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
     startBtn.onclick = async () => {
@@ -63,45 +61,34 @@
         reader.onload = async (e) => {
             const data = new Uint8Array(e.target.result);
             const workbook = XLSX.read(data, {type: 'array'});
-            const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const json = XLSX.utils.sheet_to_json(sheet);
+            const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
             
-            if (json.length === 0) {
-                alert("엑셀에 데이터가 없습니다.");
-                startBtn.disabled = false;
-                return;
-            }
-
+            statusDiv.innerText = `총 ${json.length}건 변환 시작...`;
             resultBody.innerHTML = "";
             const finalData = [];
 
             for (let i = 0; i < json.length; i++) {
-                // 첫 번째 열 혹은 '주소' 열에서 주소 추출
                 const rawAddr = json[i]["주소"] || Object.values(json[i])[0];
                 
-                // 진행 상황 표시
-                statusDiv.innerText = `${i + 1} / ${json.length} 건 처리 중...`;
-                
-                // 429 에러 방지를 위해 요청 전 200ms(0.2초) 대기
-                await sleep(200);
+                // 1. 기본 대기 시간을 500ms(0.5초)로 상향
+                await sleep(500); 
 
                 const info = await searchAddress(rawAddr);
                 
                 finalData.push({ ...json[i], "우편번호": info.zip, "정제주소": info.addr });
 
-                // 화면에 행 추가 (최신 10개만 유지하거나 계속 추가)
-                const row = `<tr><td>${rawAddr}</td><td>${info.zip}</td><td>${info.addr}</td></tr>`;
-                resultBody.insertAdjacentHTML('afterbegin', row); // 최신 데이터가 위로 오게 함
+                const rowClass = (info.zip === "실패" || info.zip === "차단됨") ? 'class="error-row"' : '';
+                const row = `<tr ${rowClass}><td>${rawAddr}</td><td>${info.zip}</td><td>${info.addr}</td></tr>`;
+                resultBody.insertAdjacentHTML('afterbegin', row);
                 
-                // 진행바 업데이트
                 progressBar.style.width = ((i + 1) / json.length * 100) + "%";
+                statusDiv.innerText = `${i + 1} / ${json.length} 건 완료...`;
             }
 
-            // 엑셀 다운로드 실행
             const newSheet = XLSX.utils.json_to_sheet(finalData);
             const newWB = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(newWB, newSheet, "변환결과");
-            XLSX.writeFile(newWB, "주소변환_결과완료.xlsx");
+            XLSX.utils.book_append_sheet(newWB, newSheet, "결과");
+            XLSX.writeFile(newWB, "주소변환_최종완료.xlsx");
 
             statusDiv.innerText = "✅ 모든 작업이 완료되었습니다!";
             startBtn.disabled = false;
@@ -109,10 +96,9 @@
         reader.readAsArrayBuffer(fileInput.files[0]);
     };
 
-    async function searchAddress(address) {
-        if (!address) return { zip: "없음", addr: "-" };
+    async function searchAddress(address, retryCount = 0) {
+        if (!address || address.toString().length < 2) return { zip: "무효", addr: "-" };
         
-        // 쉼표나 괄호 앞까지만 잘라서 검색 정확도 향상
         let cleanAddr = address.toString().split(',')[0].split('(')[0].trim();
         
         try {
@@ -120,10 +106,14 @@
                 headers: { "Authorization": `KakaoAK ${KAKAO_API_KEY}` }
             });
 
+            // 2. 429 에러 발생 시 대처
             if (res.status === 429) {
-                console.warn("Too many requests.. retrying");
-                await sleep(1000); // 1초 더 쉬고 재시도
-                return await searchAddress(address);
+                if (retryCount < 3) {
+                    statusDiv.innerText = "⚠️ 일시적 차단 발생! 3초 후 재시도합니다...";
+                    await sleep(3000); // 3초 대기
+                    return await searchAddress(address, retryCount + 1);
+                }
+                return { zip: "차단됨", addr: "잠시 후 실행하세요" };
             }
 
             const data = await res.json();
@@ -135,17 +125,16 @@
                 return { zip, addr };
             }
 
-            // 검색 결과 없을 시 단어 하나 줄여서 재시도 (건물번호 중심 검색)
+            // 검색어 축소 재시도
             let parts = cleanAddr.split(' ');
             if (parts.length > 2) {
                 let retryAddr = parts.slice(0, -1).join(' ');
-                return await searchAddress(retryAddr); 
+                return await searchAddress(retryAddr, retryCount); 
             }
 
-            return { zip: "찾지못함", addr: "-" };
+            return { zip: "미검색", addr: "-" };
         } catch (err) {
-            console.error(err);
-            return { zip: "통신에러", addr: "-" };
+            return { zip: "실패", addr: "네트워크 확인" };
         }
     }
 </script>
