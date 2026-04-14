@@ -2,158 +2,126 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>주소 -> 우편번호 일괄 변환기</title>
+    <title>주소 -> 우편번호 일괄 변환기 (테스트 앱 버전)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 40px; background-color: #f8f9fa; color: #333; }
-        .container { max-width: 800px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
-        h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
-        .upload-section { margin: 25px 0; padding: 20px; border: 2px dashed #3498db; border-radius: 8px; text-align: center; }
-        .btn { background-color: #3498db; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; transition: 0.3s; }
-        .btn:hover { background-color: #2980b9; }
-        .btn:disabled { background-color: #bdc3c7; cursor: not-allowed; }
-        #status { margin-top: 20px; font-weight: bold; color: #e67e22; }
-        table { width: 100%; margin-top: 30px; border-collapse: collapse; font-size: 14px; }
-        th, td { border: 1px solid #dee2e6; padding: 12px; text-align: left; }
-        th { background-color: #f1f3f5; }
-        .loading-bar { height: 4px; width: 0%; background: #2ecc71; margin-top: 10px; transition: width 0.3s; }
+        body { font-family: 'Malgun Gothic', sans-serif; padding: 30px; background-color: #f4f7f6; }
+        .box { max-width: 900px; margin: auto; background: white; padding: 25px; border-radius: 10px; shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .upload-area { border: 2px dashed #3498db; padding: 30px; text-align: center; margin-bottom: 20px; border-radius: 8px; }
+        .btn { background: #3498db; color: white; padding: 12px 30px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
+        .btn:hover { background: #2980b9; }
+        #status { margin-top: 15px; color: #d35400; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background: #eee; }
+        .progress-container { width: 100%; background: #eee; height: 10px; margin-top: 10px; border-radius: 5px; overflow: hidden; }
+        .progress-bar { width: 0%; height: 100%; background: #2ecc71; transition: width 0.2s; }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h2>📬 주소 데이터 우편번호 변환기</h2>
-    <p>엑셀 파일의 첫 번째 열이 <strong>'주소'</strong>인 파일을 업로드하세요.</p>
+<div class="box">
+    <h2>📬 우편번호 자동 변환 도구</h2>
+    <p>엑셀 파일(주소 포함)을 업로드하면 카카오 API로 우편번호를 찾아줍니다.</p>
     
-    <div class="upload-section">
+    <div class="upload-area">
         <input type="file" id="excelInput" accept=".xlsx, .xls" />
     </div>
 
-    <button id="startBtn" class="btn">변환 시작 및 엑셀 다운로드</button>
-    
-    <div id="status">파일을 대기 중입니다...</div>
-    <div class="loading-bar" id="progressBar"></div>
+    <button id="startBtn" class="btn">변환 시작 및 다운로드</button>
+    <div id="status">파일을 선택해주세요.</div>
+    <div class="progress-container"><div id="progressBar" class="progress-bar"></div></div>
 
-    <table id="previewTable" style="display:none;">
+    <table>
         <thead>
-            <tr>
-                <th>입력 주소</th>
-                <th>변환된 우편번호</th>
-                <th>정제된 주소</th>
-            </tr>
+            <tr><th>입력 주소</th><th>우편번호</th><th>결과 주소</th></tr>
         </thead>
         <tbody id="resultBody"></tbody>
     </table>
 </div>
 
 <script>
-    const KAKAO_API_KEY = "22b626b86b2e14d15d389413bd67419c"; // 제공해주신 키 적용
+    // 🔽 새로 만든 테스트 앱의 REST API 키를 여기에 입력하세요!
+    const KAKAO_API_KEY = "cbf0bc38532a4de33f10f812660eec6c"; 
+
     const startBtn = document.getElementById('startBtn');
     const statusDiv = document.getElementById('status');
     const progressBar = document.getElementById('progressBar');
     const resultBody = document.getElementById('resultBody');
-    const previewTable = document.getElementById('previewTable');
 
-    startBtn.addEventListener('click', async () => {
+    startBtn.onclick = async () => {
         const fileInput = document.getElementById('excelInput');
-        if (!fileInput.files[0]) return alert("엑셀 파일을 먼저 선택해주세요.");
+        if (!fileInput.files[0]) return alert("파일을 선택해주세요.");
 
         startBtn.disabled = true;
-        statusDiv.innerText = "엑셀 파일을 읽는 중...";
-
         const reader = new FileReader();
+        
         reader.onload = async (e) => {
             const data = new Uint8Array(e.target.result);
             const workbook = XLSX.read(data, {type: 'array'});
-            const sheetName = workbook.SheetNames[0];
-            const sheet = workbook.Sheets[sheetName];
-            const json = XLSX.utils.sheet_to_json(sheet);
-
-            if (json.length === 0) {
-                alert("데이터가 없습니다.");
-                startBtn.disabled = false;
-                return;
-            }
-
-            statusDiv.innerText = `총 ${json.length}건의 주소를 변환하는 중...`;
-            previewTable.style.display = "table";
+            const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+            
+            statusDiv.innerText = `총 ${json.length}건 처리 중...`;
             resultBody.innerHTML = "";
-
             const finalData = [];
 
             for (let i = 0; i < json.length; i++) {
-                // '주소'라는 이름의 컬럼을 찾거나 첫 번째 컬럼 사용
-                const addr = json[i]["주소"] || Object.values(json[i])[0];
-                const info = await fetchZipCode(addr);
+                const rawAddr = json[i]["주소"] || Object.values(json[i])[0];
+                const info = await searchAddress(rawAddr);
                 
-                // 결과 데이터 구성
-                const rowResult = {
-                    ...json[i],
-                    "우편번호": info.zipCode,
-                    "정제주소": info.roadAddr
-                };
-                finalData.push(rowResult);
+                finalData.push({ ...json[i], "우편번호": info.zip, "정제주소": info.addr });
 
-                // 화면 미리보기 업데이트
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${addr}</td><td>${info.zipCode}</td><td>${info.roadAddr}</td>`;
-                resultBody.appendChild(tr);
-
-                // 진행률 표시
-                const percent = ((i + 1) / json.length) * 100;
-                progressBar.style.width = percent + "%";
+                // 테이블 미리보기
+                const row = `<tr><td>${rawAddr}</td><td>${info.zip}</td><td>${info.addr}</td></tr>`;
+                resultBody.insertAdjacentHTML('beforeend', row);
+                
+                // 진행바
+                progressBar.style.width = ((i+1)/json.length*100) + "%";
             }
 
-            // 새로운 엑셀 파일 생성 및 다운로드
+            // 엑셀 다운로드
             const newSheet = XLSX.utils.json_to_sheet(finalData);
-            const newWorkbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(newWorkbook, newSheet, "Result");
-            XLSX.writeFile(newWorkbook, "address_with_zipcode.xlsx");
+            const newWB = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(newWB, newSheet, "결과");
+            XLSX.writeFile(newWB, "주소변환_결과.xlsx");
 
-            statusDiv.innerText = "✅ 변환 완료 및 파일 다운로드됨!";
+            statusDiv.innerText = "✅ 완료되었습니다!";
             startBtn.disabled = false;
         };
         reader.readAsArrayBuffer(fileInput.files[0]);
-    });
+    };
 
- async function fetchZipCode(address) {
-        if (!address) return { zipCode: "주소없음", roadAddr: "-" };
+    async function searchAddress(address) {
+        if (!address) return { zip: "없음", addr: "-" };
         
-        // 1차 시도: 원본 주소 그대로 검색
-        let result = await callKakaoAPI(address);
-
-        // 2차 시도: 실패 시 쉼표(,)나 괄호(() 앞부분만 잘라서 검색 (상세주소 제거)
-        if (!result) {
-            const cleanedAddr = address.split(',')[0].split('(')[0].trim();
-            result = await callKakaoAPI(cleanedAddr);
-        }
-
-        if (result) {
-            const doc = result;
-            const zip = doc.road_address ? doc.road_address.zone_no : (doc.address ? doc.address.zip_code : "N/A");
-            const road = doc.road_address ? doc.road_address.address_name : doc.address.address_name;
-            return { zipCode: zip, roadAddr: road };
-        }
-
-        return { zipCode: "찾을 수 없음", roadAddr: "-" };
-    }
-
-    async function callKakaoAPI(query) {
+        // 검색 최적화: 상세주소 분리
+        let cleanAddr = address.toString().split(',')[0].split('(')[0].trim();
+        
         try {
-            const response = await fetch(`https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(query)}`, {
+            const res = await fetch(`https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(cleanAddr)}`, {
                 headers: { "Authorization": `KakaoAK ${KAKAO_API_KEY}` }
             });
-            const data = await response.json();
+            const data = await res.json();
+
             if (data.documents && data.documents.length > 0) {
-                return data.documents[0];
+                const d = data.documents[0];
+                const zip = d.road_address ? d.road_address.zone_no : (d.address ? d.address.zip_code : "N/A");
+                const addr = d.road_address ? d.road_address.address_name : d.address.address_name;
+                return { zip, addr };
             }
-            return null;
-        } catch (e) {
-            return null;
+
+            // 2차 시도: 단어 하나 줄여서 재검색 (건물번호 중심)
+            let parts = cleanAddr.split(' ');
+            if (parts.length > 2) {
+                let retryAddr = parts.slice(0, -1).join(' ');
+                return await searchAddress(retryAddr); 
+            }
+
+            return { zip: "미검색", addr: "-" };
+        } catch (err) {
+            return { zip: "에러", addr: "-" };
         }
     }
 </script>
-
 </body>
 </html>
