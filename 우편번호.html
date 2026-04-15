@@ -8,134 +8,227 @@
         body { font-family: 'Malgun Gothic', sans-serif; padding: 30px; background-color: #f4f7f6; }
         .box { max-width: 900px; margin: auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         .upload-area { border: 2px dashed #3498db; padding: 30px; text-align: center; margin-bottom: 20px; border-radius: 8px; }
-        .btn { background: #3498db; color: white; padding: 12px 30px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
+        .btn { background: #3498db; color: white; padding: 12px 30px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-right: 8px; }
         .btn:hover { background: #2980b9; }
         .btn:disabled { background: #bdc3c7; cursor: not-allowed; }
-        #status { margin-top: 15px; color: #d35400; font-weight: bold; }
+        .btn-pause { background: #e67e22; }
+        .btn-pause:hover { background: #ca6f1e; }
+        .btn-save { background: #27ae60; }
+        .btn-save:hover { background: #1e8449; }
+        #status { margin-top: 15px; color: #d35400; font-weight: bold; min-height: 22px; }
         .progress-container { width: 100%; background: #eee; height: 10px; margin-top: 10px; border-radius: 5px; overflow: hidden; }
-        .progress-bar { width: 0%; height: 100%; background: #2ecc71; transition: width 0.1s; }
+        .progress-bar { width: 0%; height: 100%; background: #2ecc71; transition: width 0.2s; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
         th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background: #f0f0f0; }
         .error-row { background-color: #fff5f5; color: #e74c3c; }
+        .warn-box { background: #fff8e1; border: 1px solid #f39c12; padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; color: #7d5a00; }
+        .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+        #cooldownMsg { color: #8e44ad; font-weight: bold; font-size: 14px; margin-top: 6px; min-height: 20px; }
     </style>
 </head>
 <body>
 
 <div class="box">
     <h2>📬 우편번호 변환기 (고강도 안전 모드)</h2>
-    <p>서버 차단을 방지하기 위해 <strong>1.0초 간격</strong>으로 천천히 처리합니다.</p>
-    
+    <div class="warn-box">
+        ⚠️ 카카오 API 차단 방지를 위해 <strong>요청 간격 1.5초</strong>로 처리합니다.<br>
+        429 차단 시: <strong>지수 백오프</strong>로 자동 대기 (15초 → 30초 → 60초 → 120초).<br>
+        연속 3회 차단 시: <strong>5분 자동 대기</strong> 후 재개됩니다.
+    </div>
+
     <div class="upload-area">
         <input type="file" id="excelInput" accept=".xlsx, .xls" />
     </div>
 
-    <button id="startBtn" class="btn">변환 시작 및 다운로드</button>
+    <div class="btn-row">
+        <button id="startBtn" class="btn">▶ 변환 시작</button>
+        <button id="pauseBtn" class="btn btn-pause" disabled>⏸ 일시정지</button>
+        <button id="saveBtn" class="btn btn-save" disabled>💾 현재까지 저장</button>
+    </div>
+
     <div id="status">파일을 선택해주세요.</div>
+    <div id="cooldownMsg"></div>
     <div class="progress-container"><div id="progressBar" class="progress-bar"></div></div>
 
     <table>
         <thead>
-            <tr><th>입력 주소</th><th>우편번호</th><th>결과 주소</th></tr>
+            <tr><th>#</th><th>입력 주소</th><th>우편번호</th><th>결과 주소</th></tr>
         </thead>
         <tbody id="resultBody"></tbody>
     </table>
 </div>
 
 <script>
-    const KAKAO_API_KEY = "cbf0bc38532a4de33f10f812660eec6c"; 
-    const startBtn = document.getElementById('startBtn');
-    const statusDiv = document.getElementById('status');
-    const progressBar = document.getElementById('progressBar');
+    const KAKAO_API_KEY = "cbf0bc38532a4de33f10f812660eec6c";
+    const startBtn   = document.getElementById('startBtn');
+    const pauseBtn   = document.getElementById('pauseBtn');
+    const saveBtn    = document.getElementById('saveBtn');
+    const statusDiv  = document.getElementById('status');
+    const cooldownDiv= document.getElementById('cooldownMsg');
+    const progressBar= document.getElementById('progressBar');
     const resultBody = document.getElementById('resultBody');
 
-    // 대기 함수 (1000ms = 1초)
+    const INTERVAL_MS        = 1500;   // 요청 간격 (ms)
+    const BACKOFF_BASE_MS    = 15000;  // 첫 번째 재시도 대기 (15초)
+    const MAX_RETRY          = 5;      // 최대 재시도 횟수
+    const CONSEC_BLOCK_LIMIT = 3;      // 연속 차단 허용 횟수
+    const LONG_PAUSE_MS      = 5 * 60 * 1000; // 5분
+
+    let isPaused    = false;
+    let isStopped   = false;
+    let finalData   = [];
+    let consecBlocks= 0;
+
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // 카운트다운 표시 함수
+    async function cooldown(ms, label) {
+        const end = Date.now() + ms;
+        while (Date.now() < end) {
+            const rem = Math.ceil((end - Date.now()) / 1000);
+            cooldownDiv.innerText = `⏳ ${label} — ${rem}초 후 재개...`;
+            await sleep(500);
+        }
+        cooldownDiv.innerText = '';
+    }
+
+    // 일시정지 대기
+    async function waitIfPaused() {
+        while (isPaused && !isStopped) {
+            await sleep(300);
+        }
+    }
+
+    pauseBtn.onclick = () => {
+        isPaused = !isPaused;
+        pauseBtn.textContent = isPaused ? '▶ 재개' : '⏸ 일시정지';
+        if (isPaused) {
+            statusDiv.innerText = '⏸ 일시정지 중...';
+            cooldownDiv.innerText = '';
+        }
+    };
+
+    saveBtn.onclick = () => {
+        if (!finalData.length) return alert("저장할 데이터가 없습니다.");
+        downloadExcel(finalData);
+    };
 
     startBtn.onclick = async () => {
         const fileInput = document.getElementById('excelInput');
         if (!fileInput.files[0]) return alert("파일을 선택해주세요.");
 
+        isPaused = false;
+        isStopped = false;
+        consecBlocks = 0;
+        finalData = [];
+        resultBody.innerHTML = '';
+        progressBar.style.width = '0%';
+        cooldownDiv.innerText = '';
+
         startBtn.disabled = true;
+        pauseBtn.disabled = false;
+        saveBtn.disabled  = false;
+
         const reader = new FileReader();
-        
         reader.onload = async (e) => {
             const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, {type: 'array'});
+            const workbook = XLSX.read(data, { type: 'array' });
             const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
-            
+
             statusDiv.innerText = `총 ${json.length}건 변환을 시작합니다...`;
-            resultBody.innerHTML = "";
-            const finalData = [];
 
             for (let i = 0; i < json.length; i++) {
+                if (isStopped) break;
+                await waitIfPaused();
+
                 const rawAddr = json[i]["주소"] || Object.values(json[i])[0];
-                
-                // [수정] 매 요청마다 1초씩 확실히 쉽니다.
-                await sleep(1000); 
+                statusDiv.innerText = `${i + 1} / ${json.length} 건 처리 중...`;
+
+                // 요청 간격
+                await sleep(INTERVAL_MS);
+                await waitIfPaused();
 
                 const info = await searchAddress(rawAddr);
-                
+
+                // 연속 차단 카운트
+                if (info.zip === "차단됨") {
+                    consecBlocks++;
+                    if (consecBlocks >= CONSEC_BLOCK_LIMIT) {
+                        consecBlocks = 0;
+                        await cooldown(LONG_PAUSE_MS, "연속 차단 감지 — 5분 자동 대기");
+                    }
+                } else {
+                    consecBlocks = 0;
+                }
+
                 finalData.push({ ...json[i], "우편번호": info.zip, "정제주소": info.addr });
 
                 const rowClass = (info.zip === "차단됨" || info.zip === "실패") ? 'class="error-row"' : '';
-                const row = `<tr ${rowClass}><td>${rawAddr}</td><td>${info.zip}</td><td>${info.addr}</td></tr>`;
+                const row = `<tr ${rowClass}><td>${i + 1}</td><td>${rawAddr}</td><td>${info.zip}</td><td>${info.addr}</td></tr>`;
                 resultBody.insertAdjacentHTML('afterbegin', row);
-                
+
                 progressBar.style.width = ((i + 1) / json.length * 100) + "%";
-                statusDiv.innerText = `${i + 1} / ${json.length} 건 완료 (진행중...)`;
             }
 
-            const newSheet = XLSX.utils.json_to_sheet(finalData);
-            const newWB = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(newWB, newSheet, "결과");
-            XLSX.writeFile(newWB, "주소변환_최종완료.xlsx");
-
-            statusDiv.innerText = "✅ 모든 작업이 완료되었습니다! 파일이 다운로드됩니다.";
+            downloadExcel(finalData);
+            statusDiv.innerText = "✅ 완료! 파일이 다운로드됩니다.";
             startBtn.disabled = false;
+            pauseBtn.disabled = true;
         };
         reader.readAsArrayBuffer(fileInput.files[0]);
     };
 
+    function downloadExcel(data) {
+        const newSheet = XLSX.utils.json_to_sheet(data);
+        const newWB = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(newWB, newSheet, "결과");
+        XLSX.writeFile(newWB, "주소변환_결과.xlsx");
+    }
+
     async function searchAddress(address, retryCount = 0) {
         if (!address || address.toString().length < 2) return { zip: "무효", addr: "-" };
-        
-        let cleanAddr = address.toString().split(',')[0].split('(')[0].trim();
-        
-        try {
-            const res = await fetch(`https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(cleanAddr)}`, {
-                headers: { "Authorization": `KakaoAK ${KAKAO_API_KEY}` }
-            });
 
-            // [수정] 429 에러 발생 시 대기 시간을 10초로 늘려 재시도
+        let cleanAddr = address.toString().split(',')[0].split('(')[0].trim();
+
+        try {
+            const res = await fetch(
+                `https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(cleanAddr)}`,
+                { headers: { "Authorization": `KakaoAK ${KAKAO_API_KEY}` } }
+            );
+
             if (res.status === 429) {
-                if (retryCount < 5) {
-                    statusDiv.innerText = `⚠️ 서버 제한 발생! 10초 후 재시도합니다... (시도횟수: ${retryCount + 1}/5)`;
-                    await sleep(10000); 
+                if (retryCount < MAX_RETRY) {
+                    // 지수 백오프: 15s → 30s → 60s → 120s → 120s
+                    const waitMs = Math.min(BACKOFF_BASE_MS * Math.pow(2, retryCount), 120000);
+                    await cooldown(waitMs, `429 차단 — 재시도 ${retryCount + 1}/${MAX_RETRY}`);
                     return await searchAddress(address, retryCount + 1);
                 }
-                return { zip: "차단됨", addr: "IP 차단 상태입니다. 30분 뒤 실행하세요." };
+                return { zip: "차단됨", addr: "재시도 초과. 나중에 다시 시도하세요." };
             }
 
             const data = await res.json();
 
             if (data.documents && data.documents.length > 0) {
                 const d = data.documents[0];
-                const zip = d.road_address ? d.road_address.zone_no : (d.address ? d.address.zip_code : "N/A");
-                const addr = d.road_address ? d.road_address.address_name : d.address.address_name;
+                const zip  = d.road_address ? d.road_address.zone_no
+                           : (d.address     ? d.address.zip_code : "N/A");
+                const addr = d.road_address ? d.road_address.address_name
+                           : d.address.address_name;
                 return { zip, addr };
             }
 
-            // 검색어 축소 재시도 (뒷부분 단어 제거)
-            let parts = cleanAddr.split(' ');
+            // 검색어 축소 재시도
+            const parts = cleanAddr.split(' ');
             if (parts.length > 2) {
-                let retryAddr = parts.slice(0, -1).join(' ');
-                return await searchAddress(retryAddr, retryCount); 
+                return await searchAddress(parts.slice(0, -1).join(' '), retryCount);
             }
 
             return { zip: "미검색", addr: "-" };
+
         } catch (err) {
             console.error(err);
-            return { zip: "실패", addr: "네트워크 통신 에러" };
+            return { zip: "실패", addr: "네트워크 오류" };
         }
     }
 </script>
