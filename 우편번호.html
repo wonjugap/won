@@ -16,14 +16,14 @@
         .progress-bar { width: 0%; height: 100%; background: #2ecc71; transition: width 0.1s; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
         th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-        .error-row { color: #e74c3c; font-weight: bold; }
+        .error-row { background-color: #fff5f5; color: #e74c3c; }
     </style>
 </head>
 <body>
 
 <div class="box">
     <h2>📬 우편번호 변환기 (고강도 안전 모드)</h2>
-    <p>서버 차단을 방지하기 위해 <strong>0.5초 간격</strong>으로 천천히 처리합니다.</p>
+    <p>서버 차단을 방지하기 위해 <strong>1.0초 간격</strong>으로 천천히 처리합니다.</p>
     
     <div class="upload-area">
         <input type="file" id="excelInput" accept=".xlsx, .xls" />
@@ -48,7 +48,7 @@
     const progressBar = document.getElementById('progressBar');
     const resultBody = document.getElementById('resultBody');
 
-    // 대기 함수
+    // 대기 함수 (1000ms = 1초)
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
     startBtn.onclick = async () => {
@@ -63,26 +63,26 @@
             const workbook = XLSX.read(data, {type: 'array'});
             const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
             
-            statusDiv.innerText = `총 ${json.length}건 변환 시작...`;
+            statusDiv.innerText = `총 ${json.length}건 변환을 시작합니다...`;
             resultBody.innerHTML = "";
             const finalData = [];
 
             for (let i = 0; i < json.length; i++) {
                 const rawAddr = json[i]["주소"] || Object.values(json[i])[0];
                 
-                // 1. 기본 대기 시간을 500ms(0.5초)로 상향
-                await sleep(500); 
+                // [수정] 매 요청마다 1초씩 확실히 쉽니다.
+                await sleep(1000); 
 
                 const info = await searchAddress(rawAddr);
                 
                 finalData.push({ ...json[i], "우편번호": info.zip, "정제주소": info.addr });
 
-                const rowClass = (info.zip === "실패" || info.zip === "차단됨") ? 'class="error-row"' : '';
+                const rowClass = (info.zip === "차단됨" || info.zip === "실패") ? 'class="error-row"' : '';
                 const row = `<tr ${rowClass}><td>${rawAddr}</td><td>${info.zip}</td><td>${info.addr}</td></tr>`;
                 resultBody.insertAdjacentHTML('afterbegin', row);
                 
                 progressBar.style.width = ((i + 1) / json.length * 100) + "%";
-                statusDiv.innerText = `${i + 1} / ${json.length} 건 완료...`;
+                statusDiv.innerText = `${i + 1} / ${json.length} 건 완료 (진행중...)`;
             }
 
             const newSheet = XLSX.utils.json_to_sheet(finalData);
@@ -90,7 +90,7 @@
             XLSX.utils.book_append_sheet(newWB, newSheet, "결과");
             XLSX.writeFile(newWB, "주소변환_최종완료.xlsx");
 
-            statusDiv.innerText = "✅ 모든 작업이 완료되었습니다!";
+            statusDiv.innerText = "✅ 모든 작업이 완료되었습니다! 파일이 다운로드됩니다.";
             startBtn.disabled = false;
         };
         reader.readAsArrayBuffer(fileInput.files[0]);
@@ -106,14 +106,14 @@
                 headers: { "Authorization": `KakaoAK ${KAKAO_API_KEY}` }
             });
 
-            // 2. 429 에러 발생 시 대처
+            // [수정] 429 에러 발생 시 대기 시간을 10초로 늘려 재시도
             if (res.status === 429) {
-                if (retryCount < 3) {
-                    statusDiv.innerText = "⚠️ 일시적 차단 발생! 3초 후 재시도합니다...";
-                    await sleep(3000); // 3초 대기
+                if (retryCount < 5) {
+                    statusDiv.innerText = `⚠️ 서버 제한 발생! 10초 후 재시도합니다... (시도횟수: ${retryCount + 1}/5)`;
+                    await sleep(10000); 
                     return await searchAddress(address, retryCount + 1);
                 }
-                return { zip: "차단됨", addr: "잠시 후 실행하세요" };
+                return { zip: "차단됨", addr: "IP 차단 상태입니다. 30분 뒤 실행하세요." };
             }
 
             const data = await res.json();
@@ -125,7 +125,7 @@
                 return { zip, addr };
             }
 
-            // 검색어 축소 재시도
+            // 검색어 축소 재시도 (뒷부분 단어 제거)
             let parts = cleanAddr.split(' ');
             if (parts.length > 2) {
                 let retryAddr = parts.slice(0, -1).join(' ');
@@ -134,7 +134,8 @@
 
             return { zip: "미검색", addr: "-" };
         } catch (err) {
-            return { zip: "실패", addr: "네트워크 확인" };
+            console.error(err);
+            return { zip: "실패", addr: "네트워크 통신 에러" };
         }
     }
 </script>
